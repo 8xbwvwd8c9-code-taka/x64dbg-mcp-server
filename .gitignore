@@ -2,6 +2,7 @@ dist/
 zig-out/
 zig-cache/
 .zig-cache/
+.zig-global-cache/
 *.dll
 *.dp32
 *.dp64

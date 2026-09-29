@@ -140,3 +140,135 @@ pub fn getObjectField(parsed: std.json.Value, field: []const u8) ?std.json.Value
     const obj = parsed.object;
     return obj.get(field);
 }
+
+// ── Tests ───────────────────────────────────────────────────────────
+
+test "JsonWriter writes a simple object" {
+    var buf: [256]u8 = undefined;
+    var w = JsonWriter.init(&buf);
+    w.beginObject();
+    w.fieldStr("name", "alice");
+    w.fieldInt("age", 30);
+    w.fieldBool("active", true);
+    w.endObject();
+    try std.testing.expectEqualStrings("{\"name\":\"alice\",\"age\":30,\"active\":true}", w.slice());
+}
+
+test "JsonWriter escapes special characters in strings" {
+    var buf: [256]u8 = undefined;
+    var w = JsonWriter.init(&buf);
+    w.writeString("a\"b\\c\nd\re\tf");
+    try std.testing.expectEqualStrings("\"a\\\"b\\\\c\\nd\\re\\tf\"", w.slice());
+}
+
+test "JsonWriter writes null and raw fields" {
+    var buf: [256]u8 = undefined;
+    var w = JsonWriter.init(&buf);
+    w.beginObject();
+    w.fieldNull("nothing");
+    w.fieldRaw("raw", "[1,2,3]");
+    w.endObject();
+    try std.testing.expectEqualStrings("{\"nothing\":null,\"raw\":[1,2,3]}", w.slice());
+}
+
+test "JsonWriter writes nested arrays" {
+    var buf: [256]u8 = undefined;
+    var w = JsonWriter.init(&buf);
+    w.beginArray();
+    w.writeInt(1);
+    w.raw(",");
+    w.writeInt(2);
+    w.raw(",");
+    w.writeInt(3);
+    w.endArray();
+    try std.testing.expectEqualStrings("[1,2,3]", w.slice());
+}
+
+test "JsonWriter writes hex value" {
+    var buf: [64]u8 = undefined;
+    var w = JsonWriter.init(&buf);
+    w.writeHex(0xDEADBEEF);
+    try std.testing.expectEqualStrings("\"0xDEADBEEF\"", w.slice());
+}
+
+test "JsonWriter handles buffer overflow gracefully" {
+    // 7 bytes exactly fits "hello" (quotes + 5 chars)
+    var buf: [7]u8 = undefined;
+    var w = JsonWriter.init(&buf);
+    w.writeString("hello");
+    try std.testing.expectEqualStrings("\"hello\"", w.slice());
+    // buffer is full; further writes are ignored (no panic, no corruption)
+    w.writeString("this-is-way-too-long-for-the-buffer");
+    try std.testing.expectEqualStrings("\"hello\"", w.slice());
+}
+
+test "JsonWriter strips trailing comma on endObject" {
+    var buf: [64]u8 = undefined;
+    var w = JsonWriter.init(&buf);
+    w.beginObject();
+    w.fieldStr("k", "v");
+    w.endObject();
+    try std.testing.expectEqualStrings("{\"k\":\"v\"}", w.slice());
+}
+
+test "getStringField returns value for string field" {
+    const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator,
+        \\{"name":"alice","age":30}
+    , .{});
+    defer parsed.deinit();
+    const val = getStringField(parsed.value, "name");
+    try std.testing.expect(val != null);
+    try std.testing.expectEqualStrings("alice", val.?);
+}
+
+test "getStringField returns null for non-string field" {
+    const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator,
+        \\{"age":30}
+    , .{});
+    defer parsed.deinit();
+    try std.testing.expect(getStringField(parsed.value, "age") == null);
+}
+
+test "getStringField returns null for missing field" {
+    const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator,
+        \\{"name":"alice"}
+    , .{});
+    defer parsed.deinit();
+    try std.testing.expect(getStringField(parsed.value, "missing") == null);
+}
+
+test "getIntField returns value for integer field" {
+    const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator,
+        \\{"count":42}
+    , .{});
+    defer parsed.deinit();
+    const val = getIntField(parsed.value, "count");
+    try std.testing.expect(val != null);
+    try std.testing.expectEqual(@as(i64, 42), val.?);
+}
+
+test "getIntField returns null for non-integer field" {
+    const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator,
+        \\{"name":"alice"}
+    , .{});
+    defer parsed.deinit();
+    try std.testing.expect(getIntField(parsed.value, "name") == null);
+}
+
+test "getObjectField returns nested object" {
+    const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator,
+        \\{"meta":{"key":"value"}}
+    , .{});
+    defer parsed.deinit();
+    const obj = getObjectField(parsed.value, "meta");
+    try std.testing.expect(obj != null);
+    try std.testing.expect(obj.? == .object);
+}
+
+test "getObjectField returns null for non-object root" {
+    const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator,
+        \\[1,2,3]
+    , .{});
+    defer parsed.deinit();
+    try std.testing.expect(getObjectField(parsed.value, "0") == null);
+}

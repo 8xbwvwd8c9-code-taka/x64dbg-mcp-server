@@ -61,4 +61,13 @@ pub fn build(b: *std.Build) void {
 
     b.default_step.dependOn(&install_x32.step);
     b.default_step.dependOn(&install_x64.step);
+
+    // ── Tests (host target, no Win32 deps) ───────────────────────────
+    const test_step = b.step("test", "Run unit tests");
+    const unit_tests = b.addTest(.{
+        .root_source_file = b.path("src/mcp/json.zig"),
+        .optimize = optimize,
+    });
+    const run_tests = b.addRunArtifact(unit_tests);
+    test_step.dependOn(&run_tests.step);
 }
