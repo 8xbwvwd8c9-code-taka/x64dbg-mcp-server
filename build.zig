@@ -64,10 +64,12 @@ pub fn build(b: *std.Build) void {
 
     // ── Tests (host target, no Win32 deps) ───────────────────────────
     const test_step = b.step("test", "Run unit tests");
-    const unit_tests = b.addTest(.{
+    const test_mod = b.createModule(.{
         .root_source_file = b.path("src/mcp/json.zig"),
+        .target = b.graph.host,
         .optimize = optimize,
     });
+    const unit_tests = b.addTest(.{ .root_module = test_mod });
     const run_tests = b.addRunArtifact(unit_tests);
     test_step.dependOn(&run_tests.step);
 }

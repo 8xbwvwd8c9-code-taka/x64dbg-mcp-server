@@ -141,17 +141,48 @@ const WHITE_BRUSH: c_int = 0;
 
 extern "advapi32" fn SystemFunction036(buf: [*]u8, len: u32) callconv(.winapi) u8;
 
-// ── DPI awareness ──────────────────────────────────────────────────
-// Per-Monitor V2 context value. Must match the Windows SDK definition.
+// ── DPI awareness (runtime-resolved for Win7/8 compat) ─────────────
 const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2: ?*anyopaque = @ptrFromInt(@as(usize, @bitCast(@as(isize, -4))));
 
-extern "user32" fn SetThreadDpiAwarenessContext(value: ?*anyopaque) callconv(.winapi) ?*anyopaque;
-extern "user32" fn GetDpiForSystem() callconv(.winapi) u32;
-extern "user32" fn GetDpiForWindow(hwnd: HWND) callconv(.winapi) u32;
+extern "kernel32" fn GetProcAddress(hModule: HINSTANCE, lpProcName: [*:0]const u8) callconv(.winapi) ?*anyopaque;
 extern "user32" fn GetDlgItem(hDlg: HWND, nIDDlgItem: c_int) callconv(.winapi) HWND;
 
+const SetThreadDpiAwarenessContextFn = *const fn (?*anyopaque) callconv(.winapi) ?*anyopaque;
+const GetDpiForSystemFn = *const fn () callconv(.winapi) u32;
+const GetDpiForWindowFn = *const fn (HWND) callconv(.winapi) u32;
+
+var pfnSetThreadDpiAwarenessContext: ?SetThreadDpiAwarenessContextFn = null;
+var pfnGetDpiForSystem: ?GetDpiForSystemFn = null;
+var pfnGetDpiForWindow: ?GetDpiForWindowFn = null;
+var dpi_funcs_resolved: bool = false;
+
+fn resolveDpiFuncs() void {
+    if (dpi_funcs_resolved) return;
+    dpi_funcs_resolved = true;
+    const user32 = GetModuleHandleA("user32.dll\x00");
+    if (user32 == null) return;
+    pfnSetThreadDpiAwarenessContext = @ptrCast(GetProcAddress(user32, "SetThreadDpiAwarenessContext\x00"));
+    pfnGetDpiForSystem = @ptrCast(GetProcAddress(user32, "GetDpiForSystem\x00"));
+    pfnGetDpiForWindow = @ptrCast(GetProcAddress(user32, "GetDpiForWindow\x00"));
+}
+
 fn setPerMonitorV2() bool {
-    return SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) != null;
+    resolveDpiFuncs();
+    if (pfnSetThreadDpiAwarenessContext) |f| return f(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) != null;
+    return false;
+}
+
+fn getDpiForSystem() u32 {
+    if (pfnGetDpiForSystem) |f| return f();
+    return USER_DEFAULT_SCREEN_DPI;
+}
+
+fn getDpiForWindow(hwnd: HWND) u32 {
+    if (pfnGetDpiForWindow) |f| {
+        const dpi = f(hwnd);
+        if (dpi != 0) return dpi;
+    }
+    return getDpiForSystem();
 }
 
 /// Scale a 96-DPI design unit by the current DPI.
@@ -452,7 +483,7 @@ fn dialogThread(_: ?*anyopaque) callconv(.winapi) u32 {
         class_registered = true;
     }
 
-    cur_dpi = GetDpiForSystem();
+    cur_dpi = getDpiForSystem();
     createFonts();
 
     dlg_hwnd = CreateWindowExA(
@@ -536,8 +567,7 @@ fn wndProc(hwnd: HWND, msg: u32, wParam: WPARAM, lParam: LPARAM) callconv(.winap
             const cfg = load();
 
             // Use the actual monitor DPI for the window we just created.
-            cur_dpi = GetDpiForWindow(hwnd);
-            if (cur_dpi == 0) cur_dpi = GetDpiForSystem();
+            cur_dpi = getDpiForWindow(hwnd);
             createFonts();
 
             // Row 1: IP Address
