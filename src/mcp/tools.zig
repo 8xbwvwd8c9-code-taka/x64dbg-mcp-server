@@ -2961,10 +2961,19 @@ fn toggleBreakpoint(params: ?std.json.Value, out: []u8) ToolResult {
 // ── DeleteAllBreakpoints ──────────────────────────────────────────
 fn deleteAllBreakpoints(_: ?std.json.Value, out: []u8) ToolResult {
     if (!bridge.isDebugging()) return errResult(out, "Error: No active debug session.");
-    _ = bridge.cmdExec("bpc\x00");
-    _ = bridge.cmdExec("bphc *\x00");
-    _ = bridge.cmdExec("bpmc *\x00");
-    return result(out, "All breakpoints deleted (normal, hardware, memory).");
+
+    // x64dbg's delete-all form omits the optional breakpoint identifier.
+    // Passing "*" is not the documented wildcard form and can leave hardware
+    // / memory breakpoints behind while DbgCmdExec itself still reports that
+    // the command was accepted.
+    const normal_ok = bridge.cmdExec("bpc\x00");
+    const hardware_ok = bridge.cmdExec("bphc\x00");
+    const memory_ok = bridge.cmdExec("bpmc\x00");
+
+    if (!normal_ok or !hardware_ok or !memory_ok)
+        return errResult(out, "Error: One or more breakpoint-clear commands were not accepted.");
+
+    return result(out, "Breakpoint-clear commands accepted (normal, hardware, memory). Verify with ListBreakpoints.");
 }
 
 // ── ResetHitCount ─────────────────────────────────────────────────
